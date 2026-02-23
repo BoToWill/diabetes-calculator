@@ -27,7 +27,7 @@ import numpy as np
 # ══════════════════════════════════════════════════════════════════════════════
 
 APP_VERSION    = "7.1"
-GEMINI_API_KEY = "AIzaSyAliac_9z_02hLWs0PxeWRj3CFx32JzH_Q"
+GEMINI_API_KEY = "AIzaSyAuvg7qrtppRaasSUfpLMOJRygubZJTqzE"
 GEMINI_URL     = (
     "https://generativelanguage.googleapis.com/v1beta/models/"
     "gemini-2.0-flash:generateContent?key=" + GEMINI_API_KEY
@@ -588,7 +588,7 @@ def init_session():
         "product_history": [],
         "product_freq":    {},
         "user_profile": {
-            "name": "", "age": 25, "weight": 60, "height": 165,
+            "name": "", "age": 17, "weight": 49, "height": 168,
             "activity": "medium", "insulin_type": "rapid",
             "target_min": 4.5, "target_max": 7.8,
             "tdd": 35.0,
@@ -2618,10 +2618,10 @@ def tab_settings():
         sc1, sc2, sc3 = st.columns(3)
         with sc1:
             name   = st.text_input("Ім'я", p.get("name",""))
-            age    = st.number_input("Вік", 1, 120, p.get("age", 25))
+            age    = st.number_input("Вік", 1, 120, p.get("age", 17))
         with sc2:
-            weight = st.number_input("Вага (кг)", 20, 200, p.get("weight", 60))
-            height = st.number_input("Зріст (см)", 100, 250, p.get("height", 165))
+            weight = st.number_input("Вага (кг)", 20, 200, p.get("weight", 49))
+            height = st.number_input("Зріст (см)", 100, 250, p.get("height", 168))
         with sc3:
             activity     = st.selectbox("Активність", ["low","medium","high"],
                                          index=["low","medium","high"].index(p.get("activity","medium")))
