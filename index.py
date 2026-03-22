@@ -26,13 +26,16 @@ import numpy as np
 #  CONFIGURATION
 # ══════════════════════════════════════════════════════════════════════════════
 
-APP_VERSION    = "7.1"
-# ── API ключ ВИДАЛЕНО з коду — запити йдуть через Cloudflare Worker ──────────
-# Замініть URL нижче на ваш Cloudflare Worker після деплою
-GEMINI_URL = os.environ.get(
-    "GLYPRO_PROXY_URL",
-    "https://gentle-scene.atomasyyy6.workers.dev/",  # ← замініть після деплою
-)
+APP_VERSION = "7.1"
+
+# ── Cloudflare Worker URL (проксі до Gemini) ──────────────────────────────
+# Після деплою Worker'а замініть рядок нижче на вашу Worker URL:
+#   https://glypro-gemini.YOUR-SUBDOMAIN.workers.dev
+# Якщо Worker ще не налаштований — залиште порожнім, буде пряме з'єднання.
+CLOUDFLARE_WORKER_URL = "https://gentle-scene.atomasyyy6.workers.dev/"   # ← вставте сюди Worker URL після деплою
+
+# Прямий ключ (fallback, якщо Worker не налаштований)
+GEMINI_API_KEY = "AIzaSyAuvg7qrtppRaasSUfpLMOJRygubZJTqzE"
 DATA_FILE   = "diabetes_data.json"
 BACKUP_FILE = "diabetes_backup.json"
 
@@ -400,11 +403,61 @@ TDD (добова доза): {p.get('tdd', 35)} ОД
 """
 
 
-# _get_available_gemini_model видалено — тепер використовується Cloudflare Worker проксі
+def _get_available_gemini_model():
+    """
+    Auto-discover available Gemini model.
+    Uses Cloudflare Worker proxy if CLOUDFLARE_WORKER_URL is set,
+    otherwise falls back to direct Google API.
+    Returns (source, model_short_name) or None.
+    """
+    worker = CLOUDFLARE_WORKER_URL.rstrip("/")
+
+    # ── Via Cloudflare Worker ──
+    if worker:
+        try:
+            resp = requests.get(f"{worker}/models", timeout=10)
+            if resp.status_code == 200:
+                models = resp.json().get("models", [])
+                for keyword in ("flash", "pro"):
+                    for m in models:
+                        methods = m.get("supportedGenerationMethods", [])
+                        short   = m.get("name", "").replace("models/", "")
+                        if "generateContent" in methods and keyword in short:
+                            return ("worker", short)
+                for m in models:
+                    if "generateContent" in m.get("supportedGenerationMethods", []):
+                        return ("worker", m["name"].replace("models/", ""))
+        except Exception:
+            pass  # fall through to direct
+
+    # ── Direct Google API (fallback) ──
+    for api_ver in ("v1beta", "v1"):
+        url = (
+            f"https://generativelanguage.googleapis.com/{api_ver}/models"
+            f"?key={GEMINI_API_KEY}"
+        )
+        try:
+            resp = requests.get(url, timeout=10)
+            if resp.status_code != 200:
+                continue
+            models = resp.json().get("models", [])
+            for keyword in ("flash", "pro"):
+                for m in models:
+                    methods = m.get("supportedGenerationMethods", [])
+                    short   = m.get("name", "").replace("models/", "")
+                    if "generateContent" in methods and keyword in short:
+                        return (api_ver, short)
+            for m in models:
+                if "generateContent" in m.get("supportedGenerationMethods", []):
+                    return (api_ver, m["name"].replace("models/", ""))
+        except Exception:
+            continue
+
+    return None
 
 
 def gemini_ask(user_text: str) -> dict:
-    """Send command to Gemini. Auto-discovers the correct model."""
+    """Send command to Gemini via Cloudflare Worker proxy (or directly as fallback)."""
     context = _build_ai_context()
     system  = AI_SYSTEM_PROMPT.replace("{context}", context)
     payload = {
@@ -414,13 +467,36 @@ def gemini_ask(user_text: str) -> dict:
         "generationConfig": {"temperature": 0.2, "maxOutputTokens": 512},
     }
 
-    # ── Запит іде через Cloudflare Worker (API ключ схований там) ──
-    url = GEMINI_URL
+    discovered = _get_available_gemini_model()
+    if discovered is None:
+        return {
+            "action": "answer",
+            "message": (
+                "❌ Не вдалося підключитися до Gemini.\n"
+                "Перевірте:\n"
+                "• Cloudflare Worker задеплоєний та URL вказано в CLOUDFLARE_WORKER_URL\n"
+                "• API ключ збережений як секрет GEMINI_API_KEY у Worker\n"
+                "• Увімкнено Generative Language API: "
+                "https://console.cloud.google.com/apis/library/generativelanguage.googleapis.com"
+            ),
+        }
+
+    source, model = discovered
+    worker = CLOUDFLARE_WORKER_URL.rstrip("/")
+
+    if source == "worker" and worker:
+        url = f"{worker}/generate/{model}"
+        headers = {"Content-Type": "application/json"}
+    else:
+        url = (
+            f"https://generativelanguage.googleapis.com/{source}/models/"
+            f"{model}:generateContent?key={GEMINI_API_KEY}"
+        )
+        headers = {"Content-Type": "application/json"}
 
     try:
-        resp = requests.post(url, json=payload, timeout=20)
-        if resp.status_code != 200:
-            return {"action": "answer", "message": f"❌ Статус: {resp.status_code} | Відповідь: {resp.text[:300]}"}
+        resp = requests.post(url, json=payload, headers=headers, timeout=25)
+        resp.raise_for_status()
         raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
         raw = re.sub(r"^```[a-z]*\n?", "", raw)
         raw = re.sub(r"\n?```$", "", raw)
@@ -1477,16 +1553,57 @@ def render_sidebar():
         # ── AI Status check ──
         st.markdown('<hr class="divider"/>', unsafe_allow_html=True)
         if st.button("🔌 Перевірити AI (Gemini)", use_container_width=True, key="btn_api_check"):
-            with st.spinner("Перевіряю з'єднання з Cloudflare проксі..."):
+            with st.spinner("Перевіряю підключення..."):
                 found_lines = []
-                try:
-                    r = requests.post(GEMINI_URL, json={"contents":[{"role":"user","parts":[{"text":"ping"}]}]}, timeout=10)
-                    if r.status_code in (200, 400):
-                        found_lines.append('<span style="font-size:11px;color:#34d399">✅ Cloudflare Worker доступний</span>')
-                    else:
-                        found_lines.append(f'<span style="font-size:11px;color:#fbbf24">⚠️ Worker відповів: HTTP {r.status_code}</span>')
-                except Exception as e:
-                        found_lines.append(f'<span style="font-size:11px;color:#f87171">❌ {api_ver}: {e}</span>')
+                worker = CLOUDFLARE_WORKER_URL.rstrip("/")
+
+                # ── Check Worker ──
+                if worker:
+                    try:
+                        r = requests.get(f"{worker}/health", timeout=8)
+                        if r.status_code == 200:
+                            found_lines.append(f'<span style="font-size:11px;color:#34d399">✅ Cloudflare Worker: OK ({worker})</span>')
+                        else:
+                            found_lines.append(f'<span style="font-size:11px;color:#fbbf24">⚠️ Worker відповів: HTTP {r.status_code}</span>')
+                    except Exception as e:
+                        found_lines.append(f'<span style="font-size:11px;color:#f87171">❌ Worker недоступний: {e}</span>')
+
+                    try:
+                        r = requests.get(f"{worker}/models", timeout=10)
+                        if r.status_code == 200:
+                            models = r.json().get("models", [])
+                            gc = [m["name"] for m in models if "generateContent" in m.get("supportedGenerationMethods", [])]
+                            for name in gc[:3]:
+                                found_lines.append(f'<span style="font-size:11px;color:#34d399">✅ Worker model: {name.replace("models/","")}</span>')
+                        elif r.status_code == 403:
+                            found_lines.append('<span style="font-size:11px;color:#f87171">🔑 API ключ у Worker недійсний (403)</span>')
+                        else:
+                            found_lines.append(f'<span style="font-size:11px;color:#fbbf24">⚠️ Worker /models: HTTP {r.status_code}</span>')
+                    except Exception as e:
+                        found_lines.append(f'<span style="font-size:11px;color:#f87171">❌ Worker /models: {e}</span>')
+                else:
+                    found_lines.append('<span style="font-size:11px;color:#fbbf24">⚠️ CLOUDFLARE_WORKER_URL не вказано — пряме з\'єднання</span>')
+                    # Direct check
+                    for api_ver in ("v1beta", "v1"):
+                        url = (
+                            f"https://generativelanguage.googleapis.com/{api_ver}/models"
+                            f"?key={GEMINI_API_KEY}"
+                        )
+                        try:
+                            r = requests.get(url, timeout=10)
+                            if r.status_code == 200:
+                                models = r.json().get("models", [])
+                                gc = [m["name"] for m in models if "generateContent" in m.get("supportedGenerationMethods", [])]
+                                for name in gc[:3]:
+                                    found_lines.append(f'<span style="font-size:11px;color:#34d399">✅ {api_ver} / {name.replace("models/","")}</span>')
+                                break
+                            elif r.status_code == 403:
+                                found_lines.append('<span style="font-size:11px;color:#f87171">🔑 API ключ недійсний (403)</span>')
+                                break
+                            else:
+                                found_lines.append(f'<span style="font-size:11px;color:#fbbf24">⚠️ {api_ver}: HTTP {r.status_code}</span>')
+                        except Exception as e:
+                            found_lines.append(f'<span style="font-size:11px;color:#f87171">❌ {api_ver}: {e}</span>')
 
             if found_lines:
                 st.markdown("<br>".join(found_lines), unsafe_allow_html=True)
