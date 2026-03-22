@@ -419,9 +419,8 @@ def gemini_ask(user_text: str) -> dict:
 
     try:
         resp = requests.post(url, json=payload, timeout=20)
-        if resp.status_code == 429:
-            return {"action": "answer", "message": "⏱️ Gemini API перевантажений. Зачекайте 30 секунд і спробуйте ще раз."}
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            return {"action": "answer", "message": f"❌ Статус: {resp.status_code} | Відповідь: {resp.text[:300]}"}
         raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
         raw = re.sub(r"^```[a-z]*\n?", "", raw)
         raw = re.sub(r"\n?```$", "", raw)
