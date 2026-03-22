@@ -400,36 +400,7 @@ TDD (добова доза): {p.get('tdd', 35)} ОД
 """
 
 
-def _get_available_gemini_model() -> str | None:
-    """Fetch available models from API and return first that supports generateContent."""
-    for api_ver in ("v1beta", "v1"):
-        url = (
-            f"https://generativelanguage.googleapis.com/{api_ver}/models"
-            f"?key={GEMINI_API_KEY}"
-        )
-        try:
-            resp = requests.get(url, timeout=10)
-            if resp.status_code != 200:
-                continue
-            data   = resp.json()
-            models = data.get("models", [])
-            # Prefer flash models for speed
-            prefer = ["flash", "pro"]
-            for keyword in prefer:
-                for m in models:
-                    methods = m.get("supportedGenerationMethods", [])
-                    name    = m.get("name", "")          # e.g. "models/gemini-1.5-flash"
-                    short   = name.replace("models/", "") # e.g. "gemini-1.5-flash"
-                    if "generateContent" in methods and keyword in short:
-                        return (api_ver, short)
-            # Fallback — any model with generateContent
-            for m in models:
-                if "generateContent" in m.get("supportedGenerationMethods", []):
-                    short = m["name"].replace("models/", "")
-                    return (api_ver, short)
-        except Exception:
-            continue
-    return None
+# _get_available_gemini_model видалено — тепер використовується Cloudflare Worker проксі
 
 
 def gemini_ask(user_text: str) -> dict:
@@ -443,25 +414,8 @@ def gemini_ask(user_text: str) -> dict:
         "generationConfig": {"temperature": 0.2, "maxOutputTokens": 512},
     }
 
-    # ── Auto-discover model ──
-    discovered = _get_available_gemini_model()
-    if discovered is None:
-        return {
-            "action": "answer",
-            "message": (
-                "❌ Не вдалося отримати список моделей Gemini.\n"
-                "Перевірте:\n"
-                "• Чи правильний API ключ\n"
-                "• Чи увімкнено Generative Language API у Google Cloud Console\n"
-                "• Посилання: https://console.cloud.google.com/apis/library/generativelanguage.googleapis.com"
-            )
-        }
-
-    api_ver, model = discovered
-    url = (
-        f"https://generativelanguage.googleapis.com/{api_ver}/models/"
-        f"{model}:generateContent?key={GEMINI_API_KEY}"
-    )
+    # ── Запит іде через Cloudflare Worker (API ключ схований там) ──
+    url = GEMINI_URL
 
     try:
         resp = requests.post(url, json=payload, timeout=20)
@@ -1522,28 +1476,15 @@ def render_sidebar():
         # ── AI Status check ──
         st.markdown('<hr class="divider"/>', unsafe_allow_html=True)
         if st.button("🔌 Перевірити AI (Gemini)", use_container_width=True, key="btn_api_check"):
-            with st.spinner("Запитую список моделей..."):
+            with st.spinner("Перевіряю з'єднання з Cloudflare проксі..."):
                 found_lines = []
-                for api_ver in ("v1beta", "v1"):
-                    url = (
-                        f"https://generativelanguage.googleapis.com/{api_ver}/models"
-                        f"?key={GEMINI_API_KEY}"
-                    )
-                    try:
-                        r = requests.get(url, timeout=10)
-                        if r.status_code == 200:
-                            models = r.json().get("models", [])
-                            gc = [m["name"] for m in models
-                                  if "generateContent" in m.get("supportedGenerationMethods", [])]
-                            for name in gc:
-                                found_lines.append(f'<span style="font-size:11px;color:#34d399">✅ {api_ver} / {name.replace("models/","")}</span>')
-                            break
-                        elif r.status_code == 403:
-                            found_lines.append('<span style="font-size:11px;color:#f87171">🔑 API ключ недійсний або немає дозволів (403)</span>')
-                            break
-                        else:
-                            found_lines.append(f'<span style="font-size:11px;color:#fbbf24">⚠️ {api_ver}: HTTP {r.status_code}</span>')
-                    except Exception as e:
+                try:
+                    r = requests.post(GEMINI_URL, json={"contents":[{"role":"user","parts":[{"text":"ping"}]}]}, timeout=10)
+                    if r.status_code in (200, 400):
+                        found_lines.append('<span style="font-size:11px;color:#34d399">✅ Cloudflare Worker доступний</span>')
+                    else:
+                        found_lines.append(f'<span style="font-size:11px;color:#fbbf24">⚠️ Worker відповів: HTTP {r.status_code}</span>')
+                except Exception as e:
                         found_lines.append(f'<span style="font-size:11px;color:#f87171">❌ {api_ver}: {e}</span>')
 
             if found_lines:
