@@ -31,7 +31,7 @@ APP_VERSION    = "7.1"
 # Замініть URL нижче на ваш Cloudflare Worker після деплою
 GEMINI_URL = os.environ.get(
     "GLYPRO_PROXY_URL",
-    "https://gentle-scene.atomasyyy6.workers.dev",  # ← замініть після деплою
+    "https://gentle-scene.atomasyyy6.workers.dev/",  # ← замініть після деплою
 )
 DATA_FILE   = "diabetes_data.json"
 BACKUP_FILE = "diabetes_backup.json"
@@ -419,6 +419,8 @@ def gemini_ask(user_text: str) -> dict:
 
     try:
         resp = requests.post(url, json=payload, timeout=20)
+        if resp.status_code == 429:
+            return {"action": "answer", "message": "⏱️ Gemini API перевантажений. Зачекайте 30 секунд і спробуйте ще раз."}
         resp.raise_for_status()
         raw = resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
         raw = re.sub(r"^```[a-z]*\n?", "", raw)
