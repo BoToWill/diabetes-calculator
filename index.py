@@ -27,10 +27,11 @@ import numpy as np
 # ══════════════════════════════════════════════════════════════════════════════
 
 APP_VERSION    = "7.1"
-GEMINI_API_KEY = "AIzaSyAuvg7qrtppRaasSUfpLMOJRygubZJTqzE"
-GEMINI_URL     = (
-    "https://generativelanguage.googleapis.com/v1beta/models/"
-    "gemini-2.0-flash:generateContent?key=" + GEMINI_API_KEY
+# ── API ключ ВИДАЛЕНО з коду — запити йдуть через Cloudflare Worker ──────────
+# Замініть URL нижче на ваш Cloudflare Worker після деплою
+GEMINI_URL = os.environ.get(
+    "GLYPRO_PROXY_URL",
+    "https://glypro-proxy.YOUR_SUBDOMAIN.workers.dev",  # ← замініть після деплою
 )
 DATA_FILE   = "diabetes_data.json"
 BACKUP_FILE = "diabetes_backup.json"
