@@ -31,7 +31,7 @@ APP_VERSION    = "7.1"
 # Замініть URL нижче на ваш Cloudflare Worker після деплою
 GEMINI_URL = os.environ.get(
     "GLYPRO_PROXY_URL",
-    "https://glypro-proxy.YOUR_SUBDOMAIN.workers.dev",  # ← замініть після деплою
+    "https://late-breeze-6a7d.atomasyyy6.workers.dev",  # ← замініть після деплою
 )
 DATA_FILE   = "diabetes_data.json"
 BACKUP_FILE = "diabetes_backup.json"
